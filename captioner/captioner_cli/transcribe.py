@@ -1,400 +1,229 @@
 #!/usr/bin/env python3
-import os
-import sys
+"""Align corrected transcripts and export validated one-word captions."""
 import argparse
-import warnings
 import json
+import math
+from pathlib import Path
 import re
-from typing import List, Dict, Any, Tuple
+import sys
 
-# Suppress underlying library performance/deprecation noise
-warnings.filterwarnings("ignore", category=UserWarning)
-warnings.filterwarnings("ignore", category=FutureWarning)
+if __package__:
+    from .srt_generator import generate_one_word_srt, validate_word_segments
+else:
+    from srt_generator import generate_one_word_srt, validate_word_segments
 
-import whisperx
-import torch
+TIMESTAMP = re.compile(r"^\[\s*([\d:.,]+)\s*-->\s*([\d:.,]+)\s*\]\s*(.*)$")
 
-from srt_generator import generate_one_word_srt
 
-def clamp(value: float, minimum: float, maximum: float) -> float:
-    return max(minimum, min(value, maximum))
+def convert_timestamp_to_seconds(value):
+    parts = value.replace(",", ".").split(":")
+    if not 1 <= len(parts) <= 3:
+        raise ValueError(f"Invalid timestamp: {value}")
+    numbers = [float(part) for part in parts]
+    if any(not math.isfinite(n) or n < 0 for n in numbers) or any(n >= 60 for n in numbers[1:]):
+        raise ValueError(f"Invalid timestamp: {value}")
+    return sum(n * 60 ** i for i, n in enumerate(reversed(numbers)))
 
-def build_segment_words(
-    source_words: List[str],
-    aligned_words: List[Dict[str, Any]],
-    segment_start: float,
-    segment_end: float,
-) -> List[Dict[str, Any]]:
-    """
-    Maps words inside one TXT segment only.
 
-    No generated word can begin before segment_start or end after
-    segment_end.
-    """
-    result: List[Dict[str, Any]] = []
-    word_count = len(source_words)
+def validate_segments(segments, duration):
+    previous_end = 0.0
+    if not segments:
+        raise ValueError("Transcript is empty.")
+    for index, segment in enumerate(segments, 1):
+        segment["text"] = " ".join(segment["text"].split())
+        start, end = float(segment["start"]), float(segment["end"])
+        if (not segment["text"] or not math.isfinite(start) or not math.isfinite(end)
+                or start < previous_end or end <= start or end > duration):
+            raise ValueError(f"Segment {index}: empty text, overlapping, or out-of-range timestamps "
+                             f"({start}–{end}; audio duration {duration:.3f}s).")
+        segment.update(start=start, end=end)
+        previous_end = end
+    return segments
 
-    if word_count == 0:
-        return result
 
-    valid_aligned = [
-        word
-        for word in aligned_words
-        if word.get("start") is not None and word.get("end") is not None
-    ]
+def parse_json_transcript(path):
+    data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    segments = data.get("segments") if isinstance(data, dict) else data
+    if not isinstance(segments, list) or not segments:
+        raise ValueError("JSON must contain a nonempty segments list.")
+    result = []
+    for item in segments:
+        if not isinstance(item, dict) or not {"text", "start", "end"} <= item.keys():
+            raise ValueError("Every JSON segment needs text, start, and end.")
+        result.append({key: item[key] for key in ("text", "start", "end")})
+    return " ".join(s["text"] for s in result).split(), result
 
-    # Use acoustic timings only when WhisperX returned exactly the same
-    # number of words for this segment.
-    if len(valid_aligned) == word_count:
-        previous_end = segment_start
 
-        for source_word, aligned_word in zip(source_words, valid_aligned):
-            start = clamp(
-                float(aligned_word["start"]),
-                segment_start,
-                segment_end,
-            )
-            end = clamp(
-                float(aligned_word["end"]),
-                start,
-                segment_end,
-            )
-
-            start = max(start, previous_end)
-
-            if end <= start:
-                end = min(segment_end, start + 0.001)
-
-            result.append({
-                "word": source_word,
-                "start": start,
-                "end": end,
-            })
-
-            previous_end = end
-
-        # The final word can never exceed the TXT segment.
-        result[-1]["end"] = min(result[-1]["end"], segment_end)
-        return result
-
-    # WhisperX dropped or added words.
-    # Distribute the original words inside the exact TXT segment instead
-    # of extending beyond it.
-    segment_duration = max(0.001, segment_end - segment_start)
-
-    weights = [max(1, len(re.sub(r"[^\w]", "", word))) for word in source_words]
-    total_weight = sum(weights)
-
-    cursor = segment_start
-
-    for index, (source_word, weight) in enumerate(zip(source_words, weights)):
-        if index == word_count - 1:
-            end = segment_end
+def parse_txt_transcript(path, total_duration):
+    lines = [line.strip() for line in Path(path).read_text(encoding="utf-8-sig").splitlines()
+             if line.strip()]
+    segments, plain = [], []
+    for index, line in enumerate(lines, 1):
+        match = TIMESTAMP.fullmatch(line)
+        if match:
+            start, end, text = match.groups()
+            segments.append(dict(text=text, start=convert_timestamp_to_seconds(start),
+                                 end=convert_timestamp_to_seconds(end)))
+        elif "-->" in line or line.startswith("["):
+            raise ValueError(f"Malformed timestamp on line {index}.")
         else:
-            duration = segment_duration * (weight / total_weight)
-            end = min(segment_end, cursor + duration)
+            plain.append(line)
+    if segments and plain:
+        raise ValueError("Use either plain text or timestamped lines, not a mixture.")
+    if plain:
+        segments = [dict(text=" ".join(plain), start=0.0, end=total_duration)]
+    validate_segments(segments, total_duration)
+    return " ".join(s["text"] for s in segments).split(), segments
 
-        result.append({
-            "word": source_word,
-            "start": cursor,
-            "end": end,
-        })
 
-        cursor = end
-
-    result[-1]["end"] = segment_end
+def build_segment_words(source_words, aligned_words, segment_start, segment_end):
+    """Use acoustic timings only when every source word is accounted for."""
+    actual = [w.get("word", "").strip() for w in aligned_words]
+    if actual != source_words:
+        raise ValueError(f"Alignment changed/missed words in {segment_start:.3f}–{segment_end:.3f}s. "
+                         "Check the transcript and split this passage at a speech pause.")
+    result = []
+    for source, aligned in zip(source_words, aligned_words):
+        if aligned.get("start") is None or aligned.get("end") is None:
+            raise ValueError(f"No acoustic timestamp for {source!r} in "
+                             f"{segment_start:.3f}–{segment_end:.3f}s. "
+                             "Try spelling numbers as spoken words or correcting the transcript.")
+        start, end = float(aligned["start"]), float(aligned["end"])
+        if start < segment_start or end > segment_end:
+            raise ValueError(f"Word {source!r} is outside its source segment.")
+        result.append(dict(aligned, word=source, start=start, end=end))
+    validate_word_segments(result)
     return result
 
-def parse_arguments() -> argparse.Namespace:
-    """
-    Sets up application parameters using standard argparse layout.
-    """
-    parser = argparse.ArgumentParser(
-        description="Production-grade Local Audio Transcription & Forced Alignment Tool"
-    )
-    parser.add_argument(
-        "audio_path",
-        type=str,
-        help="Path to local target audio/video media asset (e.g. wave, mp3, mp4)"
-    )
-    parser.add_argument(
-        "transcript_path",
-        type=str,
-        nargs="?",
-        default=None,
-        help="Optional: Path to manual text transcript (.txt), timestamped text (.txt), or Whisper (.json)."
-    )
-    parser.add_argument(
-        "--compute_type",
-        type=str,
-        default="float32",
-        choices=["float32", "int8"],
-        help="Precision type to use. macOS CPU defaults smoothly to float32."
-    )
-    return parser.parse_args()
 
-def check_file_exists(file_path: str) -> None:
-    """
-    Ensures that essential files are accessible before loading expensive AI models.
-    """
-    if not os.path.isfile(file_path):
-        print(f"Error: Target path validation failed: '{file_path}' does not exist.", file=sys.stderr)
-        sys.exit(1)
+def align_whisperx(whisperx, audio, segments, language, device):
+    model, metadata = whisperx.load_align_model(language_code=language, device=device)
+    words = []
+    # Sentence splitting means output segment indices are not input indices.
+    for segment in segments:
+        result = whisperx.align([segment], model, metadata, audio, device,
+                                return_char_alignments=False)
+        words.extend(build_segment_words(segment["text"].split(), result["word_segments"],
+                                         segment["start"], segment["end"]))
+    return words
 
-def run_transcription_pipeline(audio_path: str, compute_type: str) -> List[Dict[str, Any]]:
-    """
-    Executes standard WhisperX pipeline path: Audio -> Transcription -> Language Detection -> Alignment.
-    """
-    device = "cpu"
-    print(f"[*] Initializing WhisperX Base Model tracking [Device: {device} | Precision: {compute_type}]...")
-    
-    model = whisperx.load_model("base", device, compute_type=compute_type)
-    
-    print("[*] Processing audio sample arrays...")
-    audio = whisperx.load_audio(audio_path)
-    
-    print("[*] Running machine transcription inference...")
-    raw_result = model.transcribe(audio, batch_size=16)
-    
-    detected_language = raw_result.get("language", "en")
-    print(f"[*] Language successfully discovered: '{detected_language}'")
-    
-    print(f"[*] Instantiating alignment engine for language: '{detected_language}'...")
-    align_model, align_metadata = whisperx.load_align_model(language_code=detected_language, device=device)
-    
-    print("[*] Commencing fine-grained word alignment execution...")
-    aligned_result = whisperx.align(
-        text_segments,
-        align_model,
-        align_metadata,
-        audio,
-        device,
-        return_char_alignments=False,
-    )
 
-    aligned_segments = aligned_result.get("segments", [])
-    final_segments: List[Dict[str, Any]] = []
+def run_whisperx(args):
+    import whisperx
 
-    for index, source_segment in enumerate(text_segments):
-        segment_start = float(source_segment["start"])
-        segment_end = float(source_segment["end"])
-        source_words = source_segment["text"].split()
-
-        aligned_words: List[Dict[str, Any]] = []
-
-        if index < len(aligned_segments):
-            aligned_words = aligned_segments[index].get("words", [])
-
-        segment_words = build_segment_words(
-            source_words=source_words,
-            aligned_words=aligned_words,
-            segment_start=segment_start,
-            segment_end=segment_end,
-        )
-
-        final_segments.extend(segment_words)
-
-    return final_segments
-
-def convert_timestamp_to_seconds(ts_str: str) -> float:
-    """
-    Converts timestamp strings like '01:23.456' or '00:01:23.456' into total float seconds.
-    """
-    parts = ts_str.strip().split(':')
-    if len(parts) == 2:
-        # Format: MM:SS.mmm
-        minutes = float(parts[0])
-        seconds = float(parts[1])
-        return (minutes * 60.0) + seconds
-    elif len(parts) == 3:
-        # Format: HH:MM:SS.mmm
-        hours = float(parts[0])
-        minutes = float(parts[1])
-        seconds = float(parts[2])
-        return (hours * 3600.0) + (minutes * 60.0) + seconds
-    else:
-        return float(ts_str)
-
-def parse_json_transcript(json_path: str) -> Tuple[List[str], List[Dict[str, Any]]]:
-    """
-    Parses a modified Whisper JSON file to extract linear word tokens and anchor segments.
-    """
-    with open(json_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-        
-    segments_list = data.get("segments", []) if isinstance(data, dict) else data
-    if not segments_list:
-        print("Error: Provided JSON file does not contain a valid 'segments' block.", file=sys.stderr)
-        sys.exit(1)
-        
-    source_words: List[str] = []
-    text_segments: List[Dict[str, Any]] = []
-    
-    for seg in segments_list:
-        text = seg.get("text", "").strip()
-        if not text:
-            continue
-            
-        source_words.extend(text.split())
-        text_segments.append({
-            "text": text,
-            "start": float(seg.get("start", 0.0)),
-            "end": float(seg.get("end", 0.0))
-        })
-        
-    return source_words, text_segments
-
-def parse_txt_transcript(txt_path: str, total_duration: float) -> Tuple[List[str], List[Dict[str, Any]]]:
-    """
-    Parses a plain or timestamp-prefixed .txt file to build text segment blocks.
-    Supports: [MM:SS.mmm --> MM:SS.mmm] Plain text token strings
-    """
-    with open(txt_path, "r", encoding="utf-8") as f:
-        raw_lines = f.readlines()
-        
-    source_words: List[str] = []
-    text_segments: List[Dict[str, Any]] = []
-    
-    # Matches patterns like: [01:23.450 --> 01:25.100] or [00:01:23.450 --> 00:01:25.100]
-    timestamp_pattern = re.compile(r'^\[\s*([\d:.]+)\s*-->\s*([\d:.]+)\s*\](.*)$')
-    
-    for line_num, line in enumerate(raw_lines, 1):
-        cleaned_line = line.strip()
-        if not cleaned_line:
-            continue
-            
-        match = timestamp_pattern.match(cleaned_line)
-        if match:
-            # Case A: Line contains explicit micro-timestamps
-            start_str, end_str, text_str = match.groups()
-            text_content = text_str.strip()
-            if not text_content:
-                continue
-                
-            try:
-                start_secs = convert_timestamp_to_seconds(start_str)
-                end_secs = convert_timestamp_to_seconds(end_str)
-            except Exception as e:
-                print(f"Warning: Line {line_num} has malformed timestamps. Defaulting to full bounds.", file=sys.stderr)
-                start_secs = 0.0
-                end_secs = total_duration
-                
-            source_words.extend(text_content.split())
-            text_segments.append({
-                "text": text_content,
-                "start": start_secs,
-                "end": end_secs
-            })
+    audio = whisperx.load_audio(str(args.audio_path))
+    duration = len(audio) / 16000.0
+    if args.transcript_path:
+        if args.transcript_path.suffix.lower() == ".json":
+            _, segments = parse_json_transcript(args.transcript_path)
         else:
-            # Case B: Line is a plain un-timestamped string text row
-            source_words.extend(cleaned_line.split())
-            text_segments.append({
-                "text": cleaned_line,
-                "start": 0.0,
-                "end": total_duration
-            })
-            
-    return source_words, text_segments
-
-def run_forced_alignment_pipeline(audio_path: str, transcript_path: str, compute_type: str) -> List[Dict[str, Any]]:
-    """
-    Executes an unconstrained acoustic forced alignment pipeline. Parses input data 
-    dynamically (JSON, plain TXT, or timestamped TXT) and restitches word parameters.
-    """
-    device = "cpu"
-    print("[*] Loading target audio arrays...")
-    audio = whisperx.load_audio(audio_path)
-    total_audio_seconds = float(len(audio)) / 16000.0
-    
-    _, ext = os.path.splitext(transcript_path.lower())
-    
-    if ext == ".json":
-        print(f"[*] Parsing manual Whisper JSON from: {transcript_path}")
-        source_words, text_segments = parse_json_transcript(transcript_path)
+            _, segments = parse_txt_transcript(args.transcript_path, duration)
+        language = args.language or "en"
     else:
-        print(f"[*] Parsing manual Text / Timestamped-Text script from: {transcript_path}")
-        source_words, text_segments = parse_txt_transcript(transcript_path, total_audio_seconds)
-        
-    if not source_words:
-        print("Error: Target transcript structural text tokens array is empty.", file=sys.stderr)
-        sys.exit(1)
-        
-    print(f"[*] Tokenized Script Verification. Loaded {len(source_words)} exact literal words.")
-    print("[*] Loading unconstrained acoustic alignment models...")
-    
-    # "en" provides maximum acoustic resolution tracking via Wav2Vec2 without timeline drift
-    align_model, align_metadata = whisperx.load_align_model(language_code="en", device=device)
-    
-    print("[*] Processing global acoustic map matrices with anchor segments...")
-    aligned_result = whisperx.align(
-        text_segments,
-        align_model,
-        align_metadata,
-        audio,
-        device,
-        return_char_alignments=False,
-    )
+        model = whisperx.load_model(args.model, args.device, compute_type=args.compute_type,
+                                    language=args.language, vad_method="silero")
+        result = model.transcribe(audio, batch_size=4)
+        segments, language = result["segments"], result["language"]
+        del model
+    validate_segments(segments, duration)
+    if any(s["end"] - s["start"] > 30 for s in segments):
+        print("Warning: long WhisperX windows can drift. Use short timestamped passages "
+              "or try --engine stable-ts for plain text.", file=sys.stderr)
+    return align_whisperx(whisperx, audio, segments, language, args.device)
 
-    print("Audio duration:", total_audio_seconds)
 
-    words = aligned_result["word_segments"]
+def merge_token_words(source_words, words):
+    """Merge tokenizer pieces only when they reconstruct an exact source word."""
+    merged, cursor = [], 0
+    for source in source_words:
+        pieces, assembled = [], ""
+        while cursor < len(words) and assembled != source:
+            piece = words[cursor]
+            assembled += piece["word"].strip()
+            pieces.append(piece)
+            cursor += 1
+            if not source.startswith(assembled):
+                raise ValueError(f"Aligner changed the transcript near {source!r}.")
+        if assembled != source or not pieces:
+            raise ValueError(f"Aligner omitted {source!r}.")
+        # A tokenizer fragment can have zero duration even when the complete
+        # word has valid timing. Validate fragments without treating them as cues.
+        previous_end = 0.0
+        for piece in pieces:
+            if piece.get("start") is None or piece.get("end") is None:
+                raise ValueError(f"Missing fragment timestamp in word {source!r}.")
+            start, end = float(piece["start"]), float(piece["end"])
+            if (not math.isfinite(start) or not math.isfinite(end)
+                    or start < previous_end or end < start):
+                raise ValueError(f"Invalid fragment timing in word {source!r}: {start}–{end}s.")
+            previous_end = end
+        merged.append(dict(word=source, start=pieces[0]["start"], end=pieces[-1]["end"]))
+    if cursor != len(words):
+        raise ValueError("Aligner returned extra words.")
+    validate_word_segments(merged)
+    return merged
 
-    print("Last 10 aligned words:")
 
-    for w in words[-10:]:
-        print(w)
+def run_stable_ts(args):
+    if not args.transcript_path or args.transcript_path.suffix.lower() != ".txt":
+        raise ValueError("stable-ts requires a corrected plain .txt transcript.")
+    if not args.language:
+        raise ValueError("Specify --language for stable-ts (for example en or hi).")
+    text = args.transcript_path.read_text(encoding="utf-8-sig").strip()
+    if not text or "-->" in text:
+        raise ValueError("stable-ts requires nonempty plain text without timestamps.")
+    import stable_whisper
 
-    print("Last aligned end:", words[-1]["end"])
+    model = stable_whisper.load_model(args.model, device=args.device)
+    result = model.align(str(args.audio_path), " ".join(text.split()), language=args.language,
+                         vad=True, suppress_silence=True, suppress_word_ts=True,
+                         regroup=False, remove_instant_words=False)
+    if result is None:
+        raise ValueError("Alignment failed; check that the transcript matches the audio.")
+    words = [word for segment in result.to_dict()["segments"] for word in segment["words"]]
+    return merge_token_words(text.split(), words)
 
-    aligned_segments = aligned_result.get("segments", [])
-    final_segments: List[Dict[str, Any]] = []
 
-    for index, source_segment in enumerate(text_segments):
-        segment_start = float(source_segment["start"])
-        segment_end = float(source_segment["end"])
-        source_words = source_segment["text"].split()
+def parse_arguments(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("audio_path", type=Path)
+    parser.add_argument("transcript_path", type=Path, nargs="?")
+    parser.add_argument("--engine", choices=["whisperx", "stable-ts"], default="whisperx")
+    parser.add_argument("--model", default="large-v3", help="Whisper transcription/stable-ts model")
+    parser.add_argument("--language", help="Language code (en, hi); auto-detect for transcription")
+    parser.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
+    parser.add_argument("--compute-type", "--compute_type", choices=["float32", "int8"], default="float32")
+    parser.add_argument("--output", type=Path, help="Default: AUDIO.words.srt")
+    parser.add_argument("--overwrite", action="store_true")
+    return parser.parse_args(argv)
 
-        aligned_words: List[Dict[str, Any]] = []
 
-        if index < len(aligned_segments):
-            aligned_words = aligned_segments[index].get("words", [])
-
-        segment_words = build_segment_words(
-            source_words=source_words,
-            aligned_words=aligned_words,
-            segment_start=segment_start,
-            segment_end=segment_end,
-        )
-
-        final_segments.extend(segment_words)
-
-    return final_segments
-
-def main() -> None:
-    args = parse_arguments()
-    
-    check_file_exists(args.audio_path)
-    base_name, _ = os.path.splitext(args.audio_path)
-    output_srt_path = f"{base_name}.srt"
+def main(argv=None):
+    args = parse_arguments(argv)
     try:
-        if args.transcript_path is not None:
-            check_file_exists(args.transcript_path)
-            word_segments = run_forced_alignment_pipeline(audio_path=args.audio_path,transcript_path=args.transcript_path,compute_type=args.compute_type)
-        else:
-            word_segments = run_transcription_pipeline(audio_path=args.audio_path,compute_type=args.compute_type)
-            
-        print("[*] Generating one-word-per-frame sequential SRT matrix payload...")
-        srt_content = generate_one_word_srt(word_segments)
-        print(f"[*] Writing finalized subtitle file out onto disk: {output_srt_path}")
-        
-        with open(output_srt_path, "w", encoding="utf-8") as srt_file:
-            srt_file.write(srt_content)
-            print(f"[+] Task completed smoothly! Final SRT built at: {output_srt_path}")
-    
-    except Exception as err:
-        print(f"\n[-] Execution Critical Pipeline Failure Encountered: {err}", file=sys.stderr)
-        sys.exit(1)
-        
+        for path in (args.audio_path, args.transcript_path):
+            if path is not None and not path.is_file():
+                raise ValueError(f"File does not exist: {path}")
+        output = args.output or args.audio_path.with_suffix(".words.srt")
+        if output.resolve() in {p.resolve() for p in (args.audio_path, args.transcript_path) if p}:
+            raise ValueError("Output must not overwrite an input file.")
+        if output.exists() and not args.overwrite:
+            raise ValueError(f"Output already exists: {output}. Use --overwrite to replace it.")
+        words = run_stable_ts(args) if args.engine == "stable-ts" else run_whisperx(args)
+        content = generate_one_word_srt(words)
+        for index, word in enumerate(words, 1):
+            if word["end"] - word["start"] > 1.5:
+                print(f"Review word {index} {word['word']!r} at {word['start']:.3f}s: "
+                      "duration exceeds 1.5s.", file=sys.stderr)
+        with output.open("w" if args.overwrite else "x", encoding="utf-8") as handle:
+            handle.write(content)
+        cue_count = content.count("\n\n") + 1
+        print(f"Saved {cue_count} captions ({len(words)} words) to {output}")
+        return 0
+    except (ValueError, TypeError, KeyError, OSError, RuntimeError, ImportError) as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 1
+
+
 if __name__ == "__main__":
-    main()
-    
+    sys.exit(main())

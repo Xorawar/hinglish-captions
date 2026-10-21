@@ -1,46 +1,17 @@
 #!/usr/bin/env zsh
 
-# Exit immediately if any command fails
-set -e
+set -eu
+cd -- "${0:A:h}"
 
-echo "=== Starting Captioner CLI Installation ==="
-
-# 1. Create a clean Python virtual environment
-echo "Creating virtual environment..."
-python3 -m venv venv
-source venv/bin/activate
-
-# 2. Upgrade core packaging tools
-echo "Upgrading pip and wheel..."
-pip install --upgrade pip wheel setuptools
-
-# 3. Install required architecture-specific packages
-echo "Installing dependencies from requirements.txt..."
-pip install -r requirements.txt
-
-# 4. Create the global symlink for the transcribe command
-echo "Setting up global CLI symlink..."
-INSTALL_DIR="$HOME/.local/bin"
-mkdir -p "$INSTALL_DIR"
-
-# Write wrapper execution script to native local bin
-CAT_BIN="$INSTALL_DIR/transcribe"
-cat << 'EOF' > "$CAT_BIN"
-#!/usr/bin/env zsh
-SOURCE_DIR="$HOME/captioner"
-source "$SOURCE_DIR/venv/bin/activate"
-python3 "$SOURCE_DIR/captioner_cli/transcribe.py" "$@"
-EOF
-
-chmod +x "$CAT_BIN"
-
-# 5. Verify PATH accessibility
-if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-    echo "Warning: $HOME/.local/bin is not in your PATH."
-    echo "Please add this line to your ~/.zshrc file:"
-    echo 'export PATH="$HOME/.local/bin:$PATH"'
+if ! command -v ffmpeg >/dev/null 2>&1; then
+    echo "Install FFmpeg first (macOS: brew install ffmpeg)." >&2
+    exit 1
 fi
 
-echo "=== Installation Complete! ==="
-echo "You can now run the 'transcribe' command globally once your PATH is sourced."
-
+# A fresh environment avoids mutating the legacy environment tracked in Git.
+python3 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip wheel setuptools
+.venv/bin/python -m pip install -r requirements.txt
+echo "Installed. From the captioner directory run:"
+echo 'source .venv/bin/activate'
+echo 'python captioner_cli/transcribe.py AUDIO TRANSCRIPT'

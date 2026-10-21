@@ -1,7 +1,11 @@
-Step 1: download the audio from davinci
-2: python3 -m venv venv (do not run it, if once done)
-3: source venv/bin/activate
-4: (venv) sachin@192 Downloads % whisper Timeline\ 1.mp3 --model large-v3 --language English 
-5: copy above output and paste it in generated .txt file
-6: fix the roman Hindi (Hinglish) transcript
-7: (venv) sachin@192 captioner % python3 captioner_cli/transcribe.py ~/Downloads/Timeline\ 1.mp3 ~/Downloads/Timeline\ 1.txt
+See README.md for setup, known limitations, and the simplified workflow.
+
+Existing timestamped transcript workflow (from this directory):
+python3 captioner_cli/transcribe.py ~/Downloads/Timeline\ 1.mp3 ~/Downloads/Timeline\ 1.txt
+
+Optional plain Roman Hinglish transcript workflow:
+python3 -m pip install -r requirements-alignment.txt
+python3 captioner_cli/transcribe.py ~/Downloads/Timeline\ 1.mp3 ~/Downloads/Timeline\ 1.txt --engine stable-ts --language hi
+
+Output is Timeline 1.words.srt. Existing files require --overwrite.
+The plain-text backend is experimental: compare it against an actual reel before relying on it.

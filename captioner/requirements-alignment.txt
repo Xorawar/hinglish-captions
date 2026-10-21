@@ -1,0 +1,2 @@
+# Optional experimental plain-text alignment backend; upstream development is paused.
+stable-ts>=2.19,<3

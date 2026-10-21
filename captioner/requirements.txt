@@ -1,0 +1,2 @@
+# Matches the WhisperX version in the existing environment.
+whisperx==3.7.5
