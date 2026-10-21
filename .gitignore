@@ -1,5 +1,39 @@
+# Local environments and secrets
+.env
+.env.*
+!.env.example
 .venv/
 venv/
+env/
+
+# Python-generated files
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Local editor and operating-system files
 .DS_Store
+.idea/
+.vscode/
+
+# Large local media, model weights, and generated caption output
+*.aac
+*.flac
+*.m4a
+*.mp3
+*.mp4
+*.mov
+*.wav
+*.webm
+*.bin
+*.onnx
+*.pt
+*.pth
+*.words.srt

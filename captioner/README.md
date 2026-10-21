@@ -25,7 +25,7 @@ source .venv/bin/activate
 
 The installer installs WhisperX 3.7.5, matching the version found in the existing environment. It does not install a global command. Dependencies and models require downloads; transcription/alignment runs locally. Large-v3 on CPU may be slow and memory-intensive; `--model medium` trades potential accuracy for lower resource use. Transitive dependencies are not fully locked.
 
-The repository already tracks a large `venv/`. The new `.gitignore` prevents new environments and caches being added but cannot untrack existing files. The tracked environment was left intact; remove it from Git in a separate repository cleanup once your fresh environment works.
+Virtual environments, downloaded model weights, local media, and generated word-level SRT files are excluded from Git. Recreate the environment from the requirements files rather than committing it.
 
 ## Shorter workflow to evaluate for Hinglish
 
