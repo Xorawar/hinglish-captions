@@ -41,10 +41,14 @@ The launcher installs the Python packages and opens <http://127.0.0.1:7860>. The
 
 ## How it works
 
-1. Upload an audio or video file.
-2. Generate a draft Roman Hinglish transcript.
-3. Correct names, numbers, missed words, and spellings in the browser.
-4. Generate and download the word-level `.srt` file.
+1. Add audio or video, choose a model and the spoken language, and continue.
+2. Paste your transcript or upload a UTF-8 `.txt` file. Optionally generate a draft, then review it in the editor.
+3. Select **Create my captions**. A processing screen appears while the words are aligned.
+4. Download your `.srt`, edit the transcript to try again, or start another file.
+
+Automatic transcription is optional. For the best Roman Hinglish wording, provide your own reviewed transcript. Uploading a transcript or generating a draft replaces the text in the editor. Processing uses the available device automatically.
+
+The transcript screen offers separate **Type or paste**, **Upload .txt**, and **Generate with Whisper** tabs. Whisper can take several minutes and may produce inaccurate wording. During generation, the UI shows model preparation followed by audio seconds processed and a percentage. **Cancel draft & return to transcript** stops the worker and preserves your existing text, so you can type or upload a transcript instead.
 
 `medium` is the default model. Choose `small` on a lower-memory laptop or `large-v3` when accuracy matters more than speed and memory usage. Local transcription is not perfect; review the transcript before publishing.
 

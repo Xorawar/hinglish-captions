@@ -55,12 +55,15 @@ def get_stable_model(model_name, device="auto"):
         return _model
 
 
-def transcribe_draft(media_path, model_name="medium", language=None, context="", device="auto"):
+def transcribe_draft(media_path, model_name="medium", language=None, context="", device="auto",
+                     progress_callback=None):
     path = Path(media_path) if media_path else None
     if path is None or not path.is_file():
         raise ValueError("Upload an audio or video file first.")
     model = get_stable_model(model_name, device)
     options = {"vad": True, "regroup": True}
+    if progress_callback is not None:
+        options["progress_callback"] = progress_callback
     if language:
         options["language"] = language
     context = " ".join((context or "").split())
