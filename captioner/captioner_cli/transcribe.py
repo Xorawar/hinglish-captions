@@ -164,6 +164,20 @@ def merge_token_words(source_words, words):
     return merged
 
 
+def align_with_stable_model(model, audio_path, text, language):
+    """Align normalized text with an already-loaded stable-ts model."""
+    normalized = " ".join(text.split())
+    if not normalized:
+        raise ValueError("Transcript is empty.")
+    result = model.align(str(audio_path), normalized, language=language,
+                         vad=True, suppress_silence=True, suppress_word_ts=True,
+                         regroup=False, remove_instant_words=False)
+    if result is None:
+        raise ValueError("Alignment failed; check that the transcript matches the audio.")
+    words = [word for segment in result.to_dict()["segments"] for word in segment["words"]]
+    return merge_token_words(normalized.split(), words)
+
+
 def run_stable_ts(args):
     if not args.transcript_path or args.transcript_path.suffix.lower() != ".txt":
         raise ValueError("stable-ts requires a corrected plain .txt transcript.")
@@ -175,13 +189,7 @@ def run_stable_ts(args):
     import stable_whisper
 
     model = stable_whisper.load_model(args.model, device=args.device)
-    result = model.align(str(args.audio_path), " ".join(text.split()), language=args.language,
-                         vad=True, suppress_silence=True, suppress_word_ts=True,
-                         regroup=False, remove_instant_words=False)
-    if result is None:
-        raise ValueError("Alignment failed; check that the transcript matches the audio.")
-    words = [word for segment in result.to_dict()["segments"] for word in segment["words"]]
-    return merge_token_words(text.split(), words)
+    return align_with_stable_model(model, args.audio_path, text, args.language)
 
 
 def parse_arguments(argv=None):

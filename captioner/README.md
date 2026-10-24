@@ -2,6 +2,12 @@
 
 Align an exact transcript to an audio/video file and normally export one whitespace word per SRT cue. Words with identical start and end times are prepended to the next timed cue, using that cue's unchanged timestamps (for example, `a Visa`). Consecutive zero-duration words carry forward together. Roman Hinglish spelling is preserved. Punctuation attached to a word stays attached.
 
+## Local browser interface
+
+Most users should start from the repository root and run `./run.sh` on macOS/Linux or `run.bat` on Windows. The local interface generates a draft transcript, lets the user correct it without creating a separate text file, and then exports the aligned SRT. See the [root README](../README.md) for prerequisites and quick-start instructions.
+
+The browser interface uses the stable-ts Faster-Whisper integration for both draft transcription and corrected-text alignment, allowing it to reuse one downloaded model. Audio and video remain local, and the server listens only on `127.0.0.1`.
+
 ## What was causing drift
 
 - One missing alignment discarded ALL acoustic timings in a segment. The fallback spread words by character length across the segment, including pauses.
@@ -14,7 +20,7 @@ Align an exact transcript to an audio/video file and normally export one whitesp
 
 The updated script preserves valid acoustic timing and pauses. If it cannot account for every word, it stops with an error instead of spreading words across silence. Strict checks can reject files that the old script would have exported with guessed timings. They do not prove that a plausible timestamp is acoustically correct.
 
-## Setup
+## CLI setup
 
 FFmpeg must be on PATH. Prefer a modern Python 3.11 installation for a fresh environment; the existing macOS system-Python 3.9 environment emits a LibreSSL compatibility warning. From this directory, use your working environment or create a fresh one:
 
@@ -23,13 +29,13 @@ zsh install.sh
 source .venv/bin/activate
 ```
 
-The installer installs WhisperX 3.7.5, matching the version found in the existing environment. It does not install a global command. Dependencies and models require downloads; transcription/alignment runs locally. Large-v3 on CPU may be slow and memory-intensive; `--model medium` trades potential accuracy for lower resource use. Transitive dependencies are not fully locked.
+The installer installs WhisperX 3.7.5. It does not install a global command. Dependencies and models require downloads; transcription/alignment runs locally. Large-v3 on CPU may be slow and memory-intensive; `--model medium` trades potential accuracy for lower resource use. Transitive dependencies are not fully locked.
 
 Virtual environments, downloaded model weights, local media, and generated word-level SRT files are excluded from Git. Recreate the environment from the requirements files rather than committing it.
 
-## Shorter workflow to evaluate for Hinglish
+## Corrected-text CLI workflow
 
-1. Obtain an accurate Roman Hinglish transcript using your current preferred transcription method. Save the exact spoken words in a plain UTF-8 `.txt` file. No timestamp reconstruction is needed for this route. Preserve repetitions and filler words; do not translate or rewrite sentences.
+1. Obtain an accurate Roman Hinglish transcript or generate and review one in the local browser interface. Save the exact spoken words in a plain UTF-8 `.txt` file. No timestamp reconstruction is needed for this route. Preserve repetitions and filler words; do not translate or rewrite sentences.
 2. Install the optional alignment dependency in the active environment:
 
    ```sh
@@ -94,6 +100,6 @@ The original audio export must include the same leading silence as the video tim
 python -m unittest discover -s tests -v
 ```
 
-Tests cover parsing, timestamp validation, pauses, dropped words, sentence splitting, tokenizer pieces, automatic transcription wiring, and output protection. Backend calls are mocked; these tests do not measure model accuracy. No real audio/video sample is included in this repository.
+Tests cover parsing, timestamp validation, pauses, dropped words, sentence splitting, tokenizer pieces, local draft generation, corrected-text alignment, automatic transcription wiring, and output protection. Backend calls are mocked; these tests do not measure model accuracy. No real audio/video sample is included in this repository.
 
 Before relying on a backend, compare the same corrected transcript on three short clips: continuous speech, a 3–5 second pause, and repeated Hinglish words/numbers. Check the first and last word, both sides of every pause, and all review warnings in Resolve at your timeline frame rate. Keep the voice track and export timeline unchanged between runs.

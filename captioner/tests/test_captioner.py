@@ -6,8 +6,11 @@ import unittest
 from unittest.mock import Mock, patch
 
 from captioner_cli.srt_generator import format_srt_time, generate_one_word_srt
+from captioner_cli.local_workflow import (
+    generate_srt, normalize_transcript, resolve_device, transcribe_draft,
+)
 from captioner_cli.transcribe import (
-    align_whisperx, build_segment_words, main, merge_token_words,
+    align_whisperx, align_with_stable_model, build_segment_words, main, merge_token_words,
     parse_arguments, parse_json_transcript, parse_txt_transcript, run_stable_ts,
     run_whisperx, validate_segments,
 )
@@ -180,6 +183,55 @@ class CaptionTests(unittest.TestCase):
         with patch.dict("sys.modules", stable_whisper=engine):
             self.assertEqual(run_stable_ts(args), [word("aaj", 2, 3)])
         self.assertTrue(engine.load_model.return_value.align.call_args.kwargs["vad"])
+
+    def test_stable_model_alignment_normalizes_text(self):
+        model = Mock()
+        model.align.return_value.to_dict.return_value = dict(
+            segments=[dict(words=[word("aaj", 1, 2), word("hum", 2, 3)])])
+        self.assertEqual(
+            align_with_stable_model(model, "audio.mp3", " aaj\n hum ", "hi"),
+            [word("aaj", 1, 2), word("hum", 2, 3)],
+        )
+        self.assertEqual(model.align.call_args.args, ("audio.mp3", "aaj hum"))
+        self.assertEqual(model.align.call_args.kwargs["language"], "hi")
+
+    def test_local_draft_transcription(self):
+        media = self.root / "reel.mp4"
+        media.touch()
+        model = Mock()
+        model.transcribe.return_value.to_dict.return_value = dict(
+            segments=[dict(text=" Aaj hum"), dict(text="build karenge.")], language="hi")
+        with patch("captioner_cli.local_workflow.get_stable_model", return_value=model):
+            transcript, language = transcribe_draft(media, language="hi", context="SaaS")
+        self.assertEqual(transcript, "Aaj hum build karenge.")
+        self.assertEqual(language, "hi")
+        options = model.transcribe.call_args.kwargs
+        self.assertEqual(options["language"], "hi")
+        self.assertIn("SaaS", options["initial_prompt"])
+        self.assertTrue(options["vad"])
+
+    def test_local_srt_generation_uses_corrected_transcript(self):
+        media = self.root / "reel.mp4"
+        media.touch()
+        model = Mock()
+        model.align.return_value.to_dict.return_value = dict(
+            segments=[dict(words=[word("aaj", 1, 2), word("hum", 2, 3)])])
+        with patch("captioner_cli.local_workflow.get_stable_model", return_value=model):
+            content, words = generate_srt(media, "aaj hum", "hi")
+        self.assertEqual(words, [word("aaj", 1, 2), word("hum", 2, 3)])
+        self.assertIn("aaj", content)
+        self.assertIn("hum", content)
+
+    def test_local_workflow_validates_inputs(self):
+        with self.assertRaises(ValueError):
+            normalize_transcript(" \n ")
+        self.assertEqual(resolve_device("cpu"), "cpu")
+        with self.assertRaises(ValueError):
+            transcribe_draft(self.root / "missing.mp3")
+        media = self.root / "reel.mp3"
+        media.touch()
+        with self.assertRaises(ValueError):
+            generate_srt(media, "", "hi")
 
     def test_failed_alignment_preserves_existing_output(self):
         audio = self.root / "test.mp3"

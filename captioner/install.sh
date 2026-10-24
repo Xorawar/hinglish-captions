@@ -8,7 +8,7 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
     exit 1
 fi
 
-# A fresh environment avoids mutating the legacy environment tracked in Git.
+# Keep command-line dependencies isolated from the system Python installation.
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip wheel setuptools
 .venv/bin/python -m pip install -r requirements.txt

@@ -1,2 +1,2 @@
 # Optional experimental plain-text alignment backend; upstream development is paused.
-stable-ts>=2.19,<3
+stable-ts[fw]>=2.19,<3

@@ -1,0 +1,2 @@
+-r requirements-alignment.txt
+gradio==6.30.0
