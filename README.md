@@ -64,3 +64,7 @@ The existing command-line workflow, timing behavior, limitations, and test instr
 cd captioner
 python -m unittest discover -s tests -v
 ```
+
+## License
+
+Released under the [MIT License](LICENSE).
