@@ -109,9 +109,12 @@ def read_transcript(path):
 
 
 def import_transcript(path):
-    text, notice = read_transcript(path)
-    return (gr.update(value=text, visible=True), notice,
-            gr.update(visible=True))
+    text, _ = read_transcript(path)
+    return gr.update(value=text, visible=True), gr.update(visible=True)
+
+
+def clear_imported_transcript():
+    return gr.update(value="", visible=False), gr.update(visible=False)
 
 
 def processing_card(draft=False, current=None, total=None, stage=None):
@@ -138,22 +141,22 @@ def run_job(media_path, transcript, model, language, draft=False, session=None):
         if not draft:
             normalize_transcript(transcript)
     except (ValueError, KeyError) as error:
-        yield (*page_updates(1), gr.skip(), gr.skip(), gr.skip(), gr.skip(),
-               gr.update(value=friendly_error(error), visible=True))
+        gr.Warning(friendly_error(error))
+        yield (*page_updates(1), gr.skip(), gr.skip(), gr.skip(), gr.skip())
         return
-    yield (*page_updates(2), processing_card(draft), gr.skip(), None, "", gr.update(value="", visible=False))
+    yield (*page_updates(2), processing_card(draft), gr.skip(), None, "")
     try:
         if draft:
             for kind, payload in stream_draft(session or uuid.uuid4().hex, media_path, model, language_code):
                 if kind == "error":
                     raise RuntimeError(payload)
                 if kind == "result":
-                    yield (*page_updates(1), gr.skip(), gr.update(value=payload, visible=True), None, "",
-                           gr.update(value="Draft ready. Review every word. Whisper may miss words, use Hindi script, or make spelling mistakes.", visible=True))
+                    gr.Info("Draft ready. Review every word before creating captions.")
+                    yield (*page_updates(1), gr.skip(), gr.update(value=payload, visible=True), None, "")
                 else:
                     card = (processing_card(True, *payload) if kind == "progress"
                             else processing_card(True, stage=payload))
-                    yield (*page_updates(2), card, gr.skip(), None, "", gr.skip())
+                    yield (*page_updates(2), card, gr.skip(), None, "")
             return
         content, words = generate_srt(media_path, transcript, language_code, model_name=model)
         job_directory = OUTPUT_ROOT / uuid.uuid4().hex
@@ -168,10 +171,11 @@ def run_job(media_path, transcript, model, language, draft=False, session=None):
             <p class="eyebrow">YOUR CAPTIONS ARE READY</p><h2>Give your words the spotlight.</h2>
             <p class="filename">{escape(filename)}</p><div class="file-meta"><span>{len(words)} words aligned</span>
             <span>Word-level SRT</span></div><p class="muted">{note}</p></div>'''
-        yield (*page_updates(3), gr.skip(), gr.skip(), str(output_path), card, "")
+        yield (*page_updates(3), gr.skip(), gr.skip(), str(output_path), card)
     except Exception as error:
-        yield (*page_updates(1), gr.skip(), gr.skip(), None, "",
-               gr.update(value="Couldn't finish. " + friendly_error(error) + " Your transcript is still here; you can edit it and try again.", visible=True))
+        gr.Warning("Couldn't finish. " + friendly_error(error) +
+                   " Your transcript is still here; you can edit it and try again.")
+        yield (*page_updates(1), gr.skip(), gr.skip(), None, "")
 
 
 def build_app():
@@ -201,20 +205,16 @@ def build_app():
                         manual_transcript = gr.Textbox(
                             label="Your transcript", lines=10, elem_id="manual-transcript-editor",
                             placeholder="Aaj hum baat karenge…\n\nType or paste your reviewed transcript here.")
-                        manual_notice = gr.Textbox(label="Status", interactive=False, value="", visible=False,
-                                                   lines=2, elem_classes="notice")
                         manual_generate = gr.Button("Create my captions →", variant="primary",
                                                     elem_classes="action-button")
                     with gr.Tab("★ Recommended · Upload .txt", id="upload"):
                         gr.HTML('<div class="option-reason"><strong>Best for a transcript prepared elsewhere.</strong>'
                                 '<p>Upload a reviewed UTF-8 .txt file. You can edit its contents before creating captions.</p></div>')
-                        upload = gr.UploadButton("↑ Choose a .txt file", file_types=[".txt"], type="filepath",
-                                                 variant="secondary", elem_classes="action-button secondary-action")
+                        upload = gr.File(label="Choose a .txt file", file_types=[".txt"], type="filepath",
+                                         elem_id="transcript-file")
                         upload_transcript = gr.Textbox(
                             label="Your uploaded transcript", lines=10, visible=False,
                             elem_id="upload-transcript-editor")
-                        upload_notice = gr.Textbox(label="Status", interactive=False, value="", visible=False,
-                                                   lines=2, elem_classes="notice")
                         upload_generate = gr.Button("Create my captions →", variant="primary", visible=False,
                                                     elem_classes="action-button")
                     with gr.Tab("Optional · Generate with Whisper", id="whisper"):
@@ -225,8 +225,6 @@ def build_app():
                         whisper_transcript = gr.Textbox(
                             label="Whisper draft — review every word", lines=10, visible=False,
                             elem_id="whisper-transcript-editor")
-                        whisper_notice = gr.Textbox(label="Status", interactive=False, value="", visible=False,
-                                                    lines=2, elem_classes="notice")
                         whisper_generate = gr.Button("Create my captions →", variant="primary", visible=False,
                                                      elem_classes="action-button")
                 back_button = gr.Button("← Back to media", variant="secondary",
@@ -240,24 +238,29 @@ def build_app():
                 download = gr.DownloadButton("↓ Download .srt", variant="primary")
                 edit_button = gr.Button("← Edit transcript", variant="secondary", elem_classes="navigation-button")
                 restart_button = gr.Button("Caption another file", variant="secondary", elem_classes="navigation-button")
-        gr.HTML('<footer>Made for your next reel. <span>Files stay on your computer.</span></footer>')
+        gr.HTML('<footer><span class="creator-credit">Made with <span class="footer-heart" aria-label="love">♥</span> by '
+                '<a href="https://www.instagram.com/egpg.builds/" target="_blank" '
+                'rel="noopener noreferrer">egpg.builds</a></span>'
+                '<span>Files stay on your computer.</span></footer>')
         pages = [media_page, transcript_page, processing_page, result_page, navigation]
         next_button.click(next_page, media, pages, show_progress="hidden")
         back_button.click(lambda: page_updates(0), outputs=pages, show_progress="hidden")
         edit_button.click(lambda: page_updates(1), outputs=pages, show_progress="hidden")
-        upload.upload(import_transcript, upload, [upload_transcript, upload_notice, upload_generate],
+        upload.upload(import_transcript, upload, [upload_transcript, upload_generate],
                       show_progress="hidden")
+        upload.clear(clear_imported_transcript, outputs=[upload_transcript, upload_generate],
+                     show_progress="hidden")
 
-        def caption_outputs(transcript, notice):
-            return pages + [processing, transcript, download, result, notice]
+        def caption_outputs(transcript):
+            return pages + [processing, transcript, download, result]
 
-        for button, transcript, notice in [
-            (manual_generate, manual_transcript, manual_notice),
-            (upload_generate, upload_transcript, upload_notice),
-            (whisper_generate, whisper_transcript, whisper_notice),
+        for button, transcript in [
+            (manual_generate, manual_transcript),
+            (upload_generate, upload_transcript),
+            (whisper_generate, whisper_transcript),
         ]:
             button.click(run_job, [media, transcript, model, language],
-                         caption_outputs(transcript, notice), show_progress="hidden",
+                         caption_outputs(transcript), show_progress="hidden",
                          concurrency_limit=1, concurrency_id="caption-model")
 
         def draft_job(media_path, text, model_name, language_name, request: gr.Request):
@@ -277,7 +280,7 @@ def build_app():
             finally:
                 cancel_draft(request.session_hash)
 
-        whisper_outputs = caption_outputs(whisper_transcript, whisper_notice)
+        whisper_outputs = caption_outputs(whisper_transcript)
         draft_event = draft_button.click(draft_job, [media, whisper_transcript, model, language],
                                         whisper_outputs + [cancel_button, whisper_generate, draft_button],
                                         show_progress="hidden", concurrency_limit=1,
@@ -285,17 +288,17 @@ def build_app():
 
         def cancel_job(request: gr.Request):
             cancel_draft(request.session_hash)
+            gr.Info("Draft cancelled. Choose a recommended option or start Whisper again.")
             return (*page_updates(1), gr.update(visible=False),
-                    gr.update(value="Draft cancelled. Choose a recommended option above, or start Whisper again.", visible=True),
                     gr.update(visible=True), gr.update(visible=False), gr.update(visible=False))
 
-        cancel_button.click(cancel_job, outputs=pages + [cancel_button, whisper_notice,
-                                                         draft_button, whisper_generate, whisper_transcript],
+        cancel_button.click(cancel_job, outputs=pages + [cancel_button, draft_button,
+                                                         whisper_generate, whisper_transcript],
                             cancels=[draft_event], queue=False, show_progress="hidden")
         restart_button.click(
-            lambda: (*page_updates(0), None, "", "", "", None, "", "", "", None),
+            lambda: (*page_updates(0), None, "", "", "", None, "", None),
             outputs=pages + [media, manual_transcript, upload_transcript, whisper_transcript,
-                             download, result, manual_notice, upload_notice, whisper_notice, upload],
+                             download, result, upload],
             show_progress="hidden")
     return demo
 

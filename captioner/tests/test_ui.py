@@ -32,11 +32,14 @@ class WizardTests(unittest.TestCase):
     def test_import_reveals_editor_and_generate_button(self):
         source = Path(self.temp.name) / "transcript.txt"
         source.write_text("Reviewed words", encoding="utf-8")
-        editor, notice, button = app.import_transcript(source)
+        editor, button = app.import_transcript(source)
         self.assertEqual(editor["value"], "Reviewed words")
         self.assertTrue(editor["visible"])
-        self.assertTrue(notice["visible"])
         self.assertTrue(button["visible"])
+        cleared_editor, cleared_button = app.clear_imported_transcript()
+        self.assertEqual(cleared_editor["value"], "")
+        self.assertFalse(cleared_editor["visible"])
+        self.assertFalse(cleared_button["visible"])
 
     def test_manual_transcript_skips_transcription_and_creates_download(self):
         with patch.object(app, "stream_draft") as draft, patch.object(
@@ -51,12 +54,13 @@ class WizardTests(unittest.TestCase):
         self.assertIn("Aaj", Path(states[-1][7]).read_text())
 
     def test_failure_returns_to_editor_and_preserves_transcript(self):
-        with patch.object(app, "generate_srt", side_effect=ValueError("No alignment")):
+        with patch.object(app, "generate_srt", side_effect=ValueError("No alignment")), \
+                patch.object(app.gr, "Warning") as warning:
             states = list(app.run_job(str(self.media), "Aaj", "small", "English"))
         self.assertTrue(states[-1][1]["visible"])
         self.assertEqual(states[-1][6], gradio.skip())
         self.assertIsNone(states[-1][7])
-        self.assertIn("No alignment", states[-1][9]["value"])
+        self.assertIn("No alignment", warning.call_args.args[0])
 
     def test_optional_draft_returns_to_review_without_exporting(self):
         with patch.object(app, "stream_draft", return_value=iter([("progress", (5, 10)), ("result", "Aaj hum")])), patch.object(app, "generate_srt") as align:

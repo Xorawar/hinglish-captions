@@ -69,6 +69,10 @@ cd captioner
 python -m unittest discover -s tests -v
 ```
 
+## Creator
+
+Created by Sachin Yadav — [@egpg.builds](https://www.instagram.com/egpg.builds/).
+
 ## License
 
 Released under the [MIT License](LICENSE).
