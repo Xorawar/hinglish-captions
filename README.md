@@ -100,7 +100,7 @@ cd hinglish-captions
 .\run.bat
 ```
 
-The launcher creates an isolated `.venv`, installs the required packages once, and opens <http://127.0.0.1:7860>. Keep the terminal window open while using the app. Stop it with `Ctrl+C`.
+The launcher creates an isolated `.venv`, installs the required packages once, and opens the app on an available local port (starting at `7860`). Keep the terminal window open while using the app. Stop it with `Ctrl+C`.
 
 > [!NOTE]
 > The first setup downloads several hundred MB of machine-learning packages. The first use of each speech model downloads that model once as well; model sizes range from hundreds of MB to a few GB. Later launches reuse the local environment and downloaded models.

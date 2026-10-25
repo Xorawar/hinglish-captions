@@ -50,5 +50,5 @@ if [ "$INSTALLED_VERSION" != "$ENV_VERSION" ]; then
     printf '%s\n' "$ENV_VERSION" > "$ENV_MARKER"
 fi
 
-echo "Starting Hinglish Captions at http://127.0.0.1:7860"
+echo "Starting Hinglish Captions on an available local port..."
 exec "$VENV_DIR/bin/python" "$PROJECT_DIR/captioner/app.py"

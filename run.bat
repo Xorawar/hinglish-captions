@@ -34,5 +34,5 @@ if not "%INSTALLED_VERSION%"=="%ENV_VERSION%" (
     >".venv\.hinglish-captions-env" echo %ENV_VERSION%
 )
 
-echo Starting Hinglish Captions at http://127.0.0.1:7860
+echo Starting Hinglish Captions on an available local port...
 ".venv\Scripts\python.exe" "captioner\app.py"

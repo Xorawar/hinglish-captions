@@ -305,7 +305,7 @@ def build_app():
 
 if __name__ == "__main__":
     build_app().queue(default_concurrency_limit=1, max_size=4).launch(
-        server_name="127.0.0.1", server_port=7860, inbrowser=True, share=False,
+        server_name="127.0.0.1", inbrowser=True, share=False,
         allowed_paths=[str(OUTPUT_ROOT)], show_error=False,
         theme=build_theme(),
         css_paths=[CSS_PATH], footer_links=[],
