@@ -10,6 +10,8 @@ The browser interface uses the stable-ts Faster-Whisper integration for both dra
 
 ## Annotated transcripts
 
+Use the [combined prompt](../prompts/annotate-transcript.txt) to convert Hindi to Roman Hinglish and add annotations in one response. Need a transcript first? Follow the [ChatGPT dictation steps](../README.md#tip-prepare-your-transcript-with-chatgpt-dictation).
+
 Paste or upload a transcript with optional `<b>`, `<i>`, and `<highlight>` tags:
 
 ```text

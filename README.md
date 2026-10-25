@@ -34,6 +34,13 @@ Choose a local media file, transcription model, and spoken language.
 
 Type or paste it, upload a UTF-8 `.txt` file, or generate an optional Whisper draft and correct it before continuing.
 
+#### Tip: prepare your transcript with ChatGPT dictation
+
+1. Open [ChatGPT](https://chatgpt.com/) in your browser and click the dictation microphone in the message box.
+2. Play your audio/video through speakers so the microphone picks it up, then stop dictation to get the transcript.
+3. Copy the [Roman Hinglish + annotation prompt](prompts/annotate-transcript.txt), replace its final placeholder with the transcript, and send it. This converts Hindi to Roman Hinglish and adds bold, italic, and highlight tags in one response.
+4. Review the result and paste it into Hinglish Captions, or save it as a `.txt` file and upload it.
+
 <p align="center">
   <a href="assets/Hinglish-Captions-transcript.png">
     <img src="assets/Hinglish-Captions-transcript.png" alt="Choose between typing, uploading, or generating a transcript" width="960">
