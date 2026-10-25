@@ -8,6 +8,24 @@ Most users should start from the repository root and run `./run.sh` on macOS/Lin
 
 The browser interface uses the stable-ts Faster-Whisper integration for both draft transcription and corrected-text alignment, allowing it to reuse one downloaded model. Audio and video remain local, and the server listens only on `127.0.0.1`.
 
+## Annotated transcripts
+
+Paste or upload a transcript with optional `<b>`, `<i>`, and `<highlight>` tags:
+
+```text
+Ye <b>sirf <highlight>₹500</highlight></b> ka hai. Usne kaha, "<i>kal milte hain</i>".
+```
+
+Tags may be nested and may cover several words. The aligner receives only the spoken text; styles are reapplied to each word after exact matching. Every exported cue has balanced tags, including when zero-duration words carry into the next cue. Bold and italic export as `<b>` and `<i>`; highlight exports as `<font color="#FFD600">` by default.
+
+Open **Annotated transcript styling** to choose the subtitle colour (default white, `#FFFFFF`) and highlight colour (default yellow, `#FFD600`). In annotated transcripts, tokens containing digits also receive the highlight colour, including currency, percentages, dates, and names such as `GPT-4`. URLs, email addresses, paths, and backtick-delimited code tokens are excluded from automatic highlighting. Written-out numbers and separate unit words are not automatically highlighted; annotate the full phrase when desired.
+
+Plain transcripts retain the existing plain SRT output, including numbers; colour settings and automatic highlighting apply only when annotation tags are present. Unsupported tags, attributes, and malformed nesting produce an error instead of being passed to the aligner. Existing text entities are not decoded. The app does not call an AI service or rewrite the transcript.
+
+Both CLI alignment engines support annotations. For timestamped TXT or JSON, close all tags within each segment. Set colours with `--subtitle-color '#FFFFFF' --highlight-color '#FFD600'` (six-digit hex values only).
+
+To check an export manually, use a short clip with a nested annotation spanning several words, an unannotated number, and punctuation outside a tag. Import the SRT into DaVinci Resolve and check the colours, bold/italic combinations, and unchanged timing. Repeat with plain text to confirm the original appearance.
+
 ## What was causing drift
 
 - One missing alignment discarded ALL acoustic timings in a segment. The fallback spread words by character length across the segment, including pauses.

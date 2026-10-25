@@ -1,6 +1,11 @@
 """Word subtitles with zero-duration words carried into the next timed cue."""
 import math
 
+if __package__:
+    from .annotations import render_word, validate_colors
+else:
+    from annotations import render_word, validate_colors
+
 
 def milliseconds(seconds):
     value = float(seconds)
@@ -39,11 +44,12 @@ def validate_word_segments(word_segments):
         raise ValueError("No aligned words; no subtitle file was generated.")
 
 
-def generate_one_word_srt(word_segments):
+def generate_one_word_srt(word_segments, subtitle_color="#FFFFFF", highlight_color="#FFD600"):
+    validate_colors(subtitle_color, highlight_color)
     validate_word_segments(word_segments)
     blocks, pending = [], []
     for item in word_segments:
-        pending.append(item["word"].strip())
+        pending.append(render_word(item, subtitle_color, highlight_color))
         if float(item["start"]) == float(item["end"]):
             continue
         blocks.append(f"{len(blocks) + 1}\n{format_srt_time(item['start'])} --> "

@@ -8,8 +8,10 @@ import re
 import sys
 
 if __package__:
+    from .annotations import apply_annotations, parse_annotations, validate_colors
     from .srt_generator import generate_one_word_srt, validate_word_segments
 else:
+    from annotations import apply_annotations, parse_annotations, validate_colors
     from srt_generator import generate_one_word_srt, validate_word_segments
 
 TIMESTAMP = re.compile(r"^\[\s*([\d:.,]+)\s*-->\s*([\d:.,]+)\s*\]\s*(.*)$")
@@ -97,14 +99,17 @@ def build_segment_words(source_words, aligned_words, segment_start, segment_end)
 
 
 def align_whisperx(whisperx, audio, segments, language, device):
+    parsed = [parse_annotations(segment["text"]) for segment in segments]
     model, metadata = whisperx.load_align_model(language_code=language, device=device)
     words = []
     # Sentence splitting means output segment indices are not input indices.
-    for segment in segments:
-        result = whisperx.align([segment], model, metadata, audio, device,
+    for segment, (text, annotations) in zip(segments, parsed):
+        plain_segment = dict(segment, text=text)
+        result = whisperx.align([plain_segment], model, metadata, audio, device,
                                 return_char_alignments=False)
-        words.extend(build_segment_words(segment["text"].split(), result["word_segments"],
-                                         segment["start"], segment["end"]))
+        aligned = build_segment_words(text.split(), result["word_segments"],
+                                      segment["start"], segment["end"])
+        words.extend(apply_annotations(aligned, annotations))
     return words
 
 
@@ -166,7 +171,8 @@ def merge_token_words(source_words, words):
 
 def align_with_stable_model(model, audio_path, text, language):
     """Align normalized text with an already-loaded stable-ts model."""
-    normalized = " ".join(text.split())
+    plain, annotations = parse_annotations(text)
+    normalized = " ".join(plain.split())
     if not normalized:
         raise ValueError("Transcript is empty.")
     result = model.align(str(audio_path), normalized, language=language,
@@ -175,7 +181,7 @@ def align_with_stable_model(model, audio_path, text, language):
     if result is None:
         raise ValueError("Alignment failed; check that the transcript matches the audio.")
     words = [word for segment in result.to_dict()["segments"] for word in segment["words"]]
-    return merge_token_words(normalized.split(), words)
+    return apply_annotations(merge_token_words(normalized.split(), words), annotations)
 
 
 def run_stable_ts(args):
@@ -186,6 +192,7 @@ def run_stable_ts(args):
     text = args.transcript_path.read_text(encoding="utf-8-sig").strip()
     if not text or "-->" in text:
         raise ValueError("stable-ts requires nonempty plain text without timestamps.")
+    parse_annotations(text)
     import stable_whisper
 
     model = stable_whisper.load_model(args.model, device=args.device)
@@ -203,12 +210,15 @@ def parse_arguments(argv=None):
     parser.add_argument("--compute-type", "--compute_type", choices=["float32", "int8"], default="float32")
     parser.add_argument("--output", type=Path, help="Default: AUDIO.words.srt")
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--subtitle-color", default="#FFFFFF", help="Base colour for annotated transcripts (#RRGGBB)")
+    parser.add_argument("--highlight-color", default="#FFD600", help="Highlight colour for annotated transcripts (#RRGGBB)")
     return parser.parse_args(argv)
 
 
 def main(argv=None):
     args = parse_arguments(argv)
     try:
+        validate_colors(args.subtitle_color, args.highlight_color)
         for path in (args.audio_path, args.transcript_path):
             if path is not None and not path.is_file():
                 raise ValueError(f"File does not exist: {path}")
@@ -218,7 +228,7 @@ def main(argv=None):
         if output.exists() and not args.overwrite:
             raise ValueError(f"Output already exists: {output}. Use --overwrite to replace it.")
         words = run_stable_ts(args) if args.engine == "stable-ts" else run_whisperx(args)
-        content = generate_one_word_srt(words)
+        content = generate_one_word_srt(words, args.subtitle_color, args.highlight_color)
         for index, word in enumerate(words, 1):
             if word["end"] - word["start"] > 1.5:
                 print(f"Review word {index} {word['word']!r} at {word['start']:.3f}s: "

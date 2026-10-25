@@ -48,7 +48,8 @@ class WizardTests(unittest.TestCase):
         ) as align:
             states = list(app.run_job(str(self.media), "Aaj", "small", "Hinglish / Hindi"))
         draft.assert_not_called()
-        align.assert_called_once_with(str(self.media), "Aaj", "hi", model_name="small")
+        align.assert_called_once_with(str(self.media), "Aaj", "hi", model_name="small",
+                                      subtitle_color="#FFFFFF", highlight_color="#FFD600")
         self.assertTrue(states[0][2]["visible"])
         self.assertTrue(states[-1][3]["visible"])
         self.assertIn("Aaj", Path(states[-1][7]).read_text())
@@ -61,6 +62,17 @@ class WizardTests(unittest.TestCase):
         self.assertEqual(states[-1][6], gradio.skip())
         self.assertIsNone(states[-1][7])
         self.assertIn("No alignment", warning.call_args.args[0])
+
+    def test_annotated_transcript_and_colors_reach_export(self):
+        source = Path(self.temp.name) / "transcript.txt"
+        source.write_text('<b>Aaj</b> <highlight>hum</highlight>', encoding="utf-8")
+        text = app.read_transcript(source)[0]
+        with patch.object(app, "generate_srt", return_value=("captions", [])) as generate:
+            states = list(app.run_job(str(self.media), text, "small", "English",
+                                      "#123456", "#abcdef"))
+        generate.assert_called_once_with(str(self.media), text, "en", model_name="small",
+                                         subtitle_color="#123456", highlight_color="#abcdef")
+        self.assertTrue(states[-1][3]["visible"])
 
     def test_optional_draft_returns_to_review_without_exporting(self):
         with patch.object(app, "stream_draft", return_value=iter([("progress", (5, 10)), ("result", "Aaj hum")])), patch.object(app, "generate_srt") as align:

@@ -132,7 +132,8 @@ def processing_card(draft=False, current=None, total=None, stage=None):
         <p class="muted">This may take a few minutes. First use also downloads the model.<br>Keep this window open.</p></div>'''
 
 
-def run_job(media_path, transcript, model, language, draft=False, session=None):
+def run_job(media_path, transcript, model, language, subtitle_color="#FFFFFF",
+            highlight_color="#FFD600", draft=False, session=None):
     """Stream screen transitions and preserve the editor on failure."""
     try:
         if not media_path or not Path(media_path).is_file():
@@ -158,7 +159,8 @@ def run_job(media_path, transcript, model, language, draft=False, session=None):
                             else processing_card(True, stage=payload))
                     yield (*page_updates(2), card, gr.skip(), None, "")
             return
-        content, words = generate_srt(media_path, transcript, language_code, model_name=model)
+        content, words = generate_srt(media_path, transcript, language_code, model_name=model,
+                                      subtitle_color=subtitle_color, highlight_color=highlight_color)
         job_directory = OUTPUT_ROOT / uuid.uuid4().hex
         job_directory.mkdir()
         filename = f"{Path(media_path).stem}.words.srt"
@@ -198,6 +200,24 @@ def build_app():
             with gr.Column(visible=False, elem_classes="screen") as transcript_page:
                 gr.HTML('<p class="eyebrow">02 / YOUR WORDS, YOUR WAY</p><h1>Get the words right.</h1>'
                         '<p class="intro">Paste the exact spoken words, including repetitions. Don’t translate or summarize.</p>')
+                with gr.Accordion("Annotated transcript styling", open=False, elem_id="annotation-styling"):
+                    with gr.Column(elem_classes="annotation-body"):
+                        with gr.Row(elem_classes="annotation-colors"):
+                            subtitle_color = gr.ColorPicker(
+                                label="Subtitle colour", value="#FFFFFF", min_width=160,
+                                elem_classes="annotation-color")
+                            highlight_color = gr.ColorPicker(
+                                label="Highlight colour", value="#FFD600", min_width=160,
+                                elem_classes="annotation-color")
+                        gr.HTML('''<div class="annotation-guide">
+                            <div class="annotation-tags" aria-label="Supported transcript tags">
+                                <span><strong>Bold</strong><code>&lt;b&gt;</code></span>
+                                <span><em>Italic</em><code>&lt;i&gt;</code></span>
+                                <span>Highlight<code>&lt;highlight&gt;</code></span>
+                            </div>
+                            <p>Wrap words in matching tags; combine styles by nesting them.</p>
+                            <p class="annotation-note">Applies to annotated transcripts only. Numbers highlight automatically.</p>
+                        </div>''')
                 with gr.Tabs(elem_id="transcript-options", overflow_behavior="wrap"):
                     with gr.Tab("★ Recommended · Type or paste", id="manual"):
                         gr.HTML('<div class="option-reason"><strong>Best when you already know the exact words.</strong>'
@@ -259,7 +279,7 @@ def build_app():
             (upload_generate, upload_transcript),
             (whisper_generate, whisper_transcript),
         ]:
-            button.click(run_job, [media, transcript, model, language],
+            button.click(run_job, [media, transcript, model, language, subtitle_color, highlight_color],
                          caption_outputs(transcript), show_progress="hidden",
                          concurrency_limit=1, concurrency_id="caption-model")
 

@@ -4,6 +4,7 @@ from pathlib import Path
 import threading
 
 from .srt_generator import generate_one_word_srt
+from .annotations import parse_annotations, validate_colors
 from .transcribe import align_with_stable_model
 
 
@@ -77,15 +78,18 @@ def transcribe_draft(media_path, model_name="medium", language=None, context="",
     return transcript, detected_language
 
 
-def generate_srt(media_path, transcript, language, model_name="medium", device="auto"):
+def generate_srt(media_path, transcript, language, model_name="medium", device="auto",
+                 subtitle_color="#FFFFFF", highlight_color="#FFD600"):
     path = Path(media_path) if media_path else None
     if path is None or not path.is_file():
         raise ValueError("The uploaded media is no longer available. Upload it again.")
     normalized = normalize_transcript(transcript)
+    parse_annotations(normalized)
+    validate_colors(subtitle_color, highlight_color)
     language = (language or "").strip().lower()
     if not language:
         raise ValueError("Enter an alignment language such as hi or en.")
     model = get_stable_model(model_name, device)
     with _model_lock:
         words = align_with_stable_model(model, path, normalized, language)
-    return generate_one_word_srt(words), words
+    return generate_one_word_srt(words, subtitle_color, highlight_color), words
